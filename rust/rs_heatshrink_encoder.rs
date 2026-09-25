@@ -73,3 +73,38 @@ pub unsafe extern "C" fn rs_push_bits(
         }
     }
 }
+
+#[no_mangle]
+pub unsafe extern "C" fn rs_push_outgoing_bits(
+    hse_outgoing_bits: u16,
+    hse_outgoing_bits_count: &mut u8,
+    hse_bit_index: &mut u8,
+    hse_curr_byte: &mut u8,
+    out_buff: *mut u8,
+    out_size: &mut usize,
+) -> u8 {
+    let (count, bits) = if *hse_outgoing_bits_count > 8 {
+        (
+            8,
+            (hse_outgoing_bits >> (*hse_outgoing_bits_count - 8)) as u8,
+        )
+    } else {
+        (*hse_outgoing_bits_count, hse_outgoing_bits as u8)
+    };
+
+    if count > 0 {
+        unsafe {
+            rs_push_bits(
+                count,
+                bits,
+                hse_bit_index,
+                hse_curr_byte,
+                out_buff,
+                out_size,
+            );
+        }
+        *hse_outgoing_bits_count -= count;
+    }
+
+    count
+}

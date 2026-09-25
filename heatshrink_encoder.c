@@ -542,23 +542,13 @@ static void push_bits(heatshrink_encoder *hse, uint8_t count, uint8_t bits,
                oi->output_size);
 }
 
-static uint8_t push_outgoing_bits(heatshrink_encoder *hse, output_info *oi) {
-  uint8_t count = 0;
-  uint8_t bits = 0;
-  if (hse->outgoing_bits_count > 8) {
-    count = 8;
-    bits = hse->outgoing_bits >> (hse->outgoing_bits_count - 8);
-  } else {
-    count = hse->outgoing_bits_count;
-    bits = hse->outgoing_bits;
-  }
+extern uint8_t rs_push_outgoing_bits(uint16_t, uint8_t *, uint8_t *, uint8_t *,
+                                     uint8_t *, size_t *);
 
-  if (count > 0) {
-    LOG("-- pushing %d outgoing bits: 0x%02x\n", count, bits);
-    push_bits(hse, count, bits, oi);
-    hse->outgoing_bits_count -= count;
-  }
-  return count;
+static uint8_t push_outgoing_bits(heatshrink_encoder *hse, output_info *oi) {
+  return rs_push_outgoing_bits(hse->outgoing_bits, &hse->outgoing_bits_count,
+                               &hse->bit_index, &hse->current_byte, oi->buf,
+                               oi->output_size);
 }
 
 static void push_literal_byte(heatshrink_encoder *hse, output_info *oi) {
