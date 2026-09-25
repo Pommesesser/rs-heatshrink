@@ -1,0 +1,7 @@
+[package]
+name = "rs_heatshrink"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "rust/rs_heatshrink_encoder.rs"

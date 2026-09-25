@@ -4,8 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-extern int rs_is_finishing(uint8_t);
-
 typedef enum {
   HSES_NOT_FULL,        /* input buffer not full enough */
   HSES_FILLED,          /* buffer is full */
@@ -247,16 +245,14 @@ HSE_poll_res heatshrink_encoder_poll(heatshrink_encoder *hse, uint8_t *out_buf,
   }
 }
 
+extern int rs_heatshrink_encoder_finish(uint8_t *, uint8_t *);
+
 HSE_finish_res heatshrink_encoder_finish(heatshrink_encoder *hse) {
   if (hse == NULL) {
     return HSER_FINISH_ERROR_NULL;
   }
-  LOG("-- setting is_finishing flag\n");
-  hse->flags |= FLAG_IS_FINISHING;
-  if (hse->state == HSES_NOT_FULL) {
-    hse->state = HSES_FILLED;
-  }
-  return hse->state == HSES_DONE ? HSER_FINISH_DONE : HSER_FINISH_MORE;
+
+  return rs_heatshrink_encoder_finish(&hse->flags, &hse->state);
 }
 
 static HSE_state st_step_search(heatshrink_encoder *hse) {
@@ -436,9 +432,9 @@ static void do_indexing(heatshrink_encoder *hse) {
 #endif
 }
 
-static int is_finishing(heatshrink_encoder *hse) {
-  // return hse->flags & FLAG_IS_FINISHING;
+extern int rs_is_finishing(uint8_t);
 
+static int is_finishing(heatshrink_encoder *hse) {
   return rs_is_finishing(hse->flags);
 }
 
