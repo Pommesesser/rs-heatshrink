@@ -1,5 +1,6 @@
 #include "heatshrink_encoder.h"
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -438,8 +439,10 @@ static int is_finishing(heatshrink_encoder *hse) {
   return rs_is_finishing(hse->flags);
 }
 
+extern int rs_can_take_byte(size_t, size_t);
+
 static int can_take_byte(output_info *oi) {
-  return *oi->output_size < oi->buf_size;
+  return rs_can_take_byte(*oi->output_size, oi->buf_size);
 }
 
 /* Return the longest match for the bytes at buf[end:end+maxlen] between
@@ -527,6 +530,18 @@ static uint16_t find_longest_match(heatshrink_encoder *hse, uint16_t start,
   return MATCH_NOT_FOUND;
 }
 
+extern void rs_push_bits(uint8_t, uint8_t, uint8_t *, uint8_t *, uint8_t *,
+                         size_t *);
+
+/* Push COUNT (max 8) bits to the output buffer, which has room.
+ * Bytes are set from the lowest bits, up. */
+static void push_bits(heatshrink_encoder *hse, uint8_t count, uint8_t bits,
+                      output_info *oi) {
+  ASSERT(count <= 8);
+  rs_push_bits(count, bits, &hse->bit_index, &hse->current_byte, oi->buf,
+               oi->output_size);
+}
+
 static uint8_t push_outgoing_bits(heatshrink_encoder *hse, output_info *oi) {
   uint8_t count = 0;
   uint8_t bits = 0;
@@ -544,38 +559,6 @@ static uint8_t push_outgoing_bits(heatshrink_encoder *hse, output_info *oi) {
     hse->outgoing_bits_count -= count;
   }
   return count;
-}
-
-/* Push COUNT (max 8) bits to the output buffer, which has room.
- * Bytes are set from the lowest bits, up. */
-static void push_bits(heatshrink_encoder *hse, uint8_t count, uint8_t bits,
-                      output_info *oi) {
-  ASSERT(count <= 8);
-  LOG("++ push_bits: %d bits, input of 0x%02x\n", count, bits);
-
-  /* If adding a whole byte and at the start of a new output byte,
-   * just push it through whole and skip the bit IO loop. */
-  if (count == 8 && hse->bit_index == 0x80) {
-    oi->buf[(*oi->output_size)++] = bits;
-  } else {
-    for (int i = count - 1; i >= 0; i--) {
-      bool bit = bits & (1 << i);
-      if (bit) {
-        hse->current_byte |= hse->bit_index;
-      }
-      if (0) {
-        LOG("  -- setting bit %d at bit index 0x%02x, byte => 0x%02x\n",
-            bit ? 1 : 0, hse->bit_index, hse->current_byte);
-      }
-      hse->bit_index >>= 1;
-      if (hse->bit_index == 0x00) {
-        hse->bit_index = 0x80;
-        LOG(" > pushing byte 0x%02x\n", hse->current_byte);
-        oi->buf[(*oi->output_size)++] = hse->current_byte;
-        hse->current_byte = 0x00;
-      }
-    }
-  }
 }
 
 static void push_literal_byte(heatshrink_encoder *hse, output_info *oi) {

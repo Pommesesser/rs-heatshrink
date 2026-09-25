@@ -96,14 +96,14 @@ STATIC_LDFLAGS= ${LDFLAGS} -L. -lheatshrink_static
 CFLAGS_STATIC = ${CFLAGS} -DHEATSHRINK_DYNAMIC_ALLOC=0
 CFLAGS_DYNAMIC = ${CFLAGS} -DHEATSHRINK_DYNAMIC_ALLOC=1
 
-heatshrink: heatshrink.od libheatshrink_dynamic.a rust/rs_heatshrink_encoder.o
+heatshrink: heatshrink.od libheatshrink_dynamic.a rust/rs_heatshrink_encoder.a
 	${CC} -o $@ $^ ${CFLAGS_DYNAMIC} -L. -lheatshrink_dynamic
 
-test_heatshrink_dynamic: test_heatshrink_dynamic.od test_heatshrink_dynamic_theft.od libheatshrink_dynamic.a rust/rs_heatshrink_encoder.o
-	${CC} -o $@ $< ${CFLAGS_DYNAMIC} test_heatshrink_dynamic_theft.od ${DYNAMIC_LDFLAGS} rust/rs_heatshrink_encoder.o
+test_heatshrink_dynamic: test_heatshrink_dynamic.od test_heatshrink_dynamic_theft.od libheatshrink_dynamic.a rust/rs_heatshrink_encoder.a
+	${CC} -o $@ $< ${CFLAGS_DYNAMIC} test_heatshrink_dynamic_theft.od ${DYNAMIC_LDFLAGS} rust/rs_heatshrink_encoder.a
 
-test_heatshrink_static: test_heatshrink_static.os libheatshrink_static.a rust/rs_heatshrink_encoder.o
-	${CC} -o $@ $< ${CFLAGS_STATIC} ${STATIC_LDFLAGS} rust/rs_heatshrink_encoder.o
+test_heatshrink_static: test_heatshrink_static.os libheatshrink_static.a rust/rs_heatshrink_encoder.a
+	${CC} -o $@ $< ${CFLAGS_STATIC} ${STATIC_LDFLAGS} rust/rs_heatshrink_encoder.a
 
 libheatshrink_static.a: ${STATIC_OBJS}
 	ar -rcs $@ $^
@@ -120,5 +120,5 @@ libheatshrink_dynamic.a: ${DYNAMIC_OBJS}
 *.os: Makefile *.h
 *.od: Makefile *.h
 
-rust/rs_heatshrink_encoder.o: rust/rs_heatshrink_encoder.rs
-	rustc --crate-type=lib --emit=obj rust/rs_heatshrink_encoder.rs -o rust/rs_heatshrink_encoder.o
+rust/rs_heatshrink_encoder.a: rust/rs_heatshrink_encoder.rs
+	rustc --crate-type=staticlib rust/rs_heatshrink_encoder.rs -o rust/rs_heatshrink_encoder.a
