@@ -1,7 +1,7 @@
 const FLAG_IS_FINISHING: u8 = 1;
 
 #[repr(u8)]
-enum HSEState {
+enum EncoderState {
     NotFull,
     Filled,
     Search,
@@ -18,11 +18,11 @@ enum HSEState {
 pub extern "C" fn rs_heatshrink_encoder_finish(flags: &mut u8, state: &mut u8) -> i32 {
     *flags |= FLAG_IS_FINISHING;
 
-    if *state == HSEState::NotFull as u8 {
-        *state = HSEState::Filled as u8;
+    if *state == EncoderState::NotFull as u8 {
+        *state = EncoderState::Filled as u8;
     }
 
-    if *state == HSEState::Done as u8 {
+    if *state == EncoderState::Done as u8 {
         0
     } else {
         1
@@ -39,8 +39,9 @@ pub extern "C" fn rs_can_take_byte(output_size: usize, buff_size: usize) -> i32 
     (output_size < buff_size) as i32
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn rs_push_bits(
+/// Push COUNT (max 8) bits to the output buffer, which has room.
+/// Bytes are set from the lowest bits, up.
+unsafe fn push_bits(
     count: u8,
     bits: u8,
     hse_bit_index: &mut u8,
@@ -75,6 +76,17 @@ pub unsafe extern "C" fn rs_push_bits(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn rs_add_tag_bit(
+    tag: u8,
+    hse_bit_index: &mut u8,
+    hse_curr_byte: &mut u8,
+    out_buff: *mut u8,
+    out_size: &mut usize,
+) {
+    push_bits(1, tag, hse_bit_index, hse_curr_byte, out_buff, out_size);
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn rs_push_outgoing_bits(
     hse_outgoing_bits: u16,
     hse_outgoing_bits_count: &mut u8,
@@ -94,7 +106,7 @@ pub unsafe extern "C" fn rs_push_outgoing_bits(
 
     if count > 0 {
         unsafe {
-            rs_push_bits(
+            push_bits(
                 count,
                 bits,
                 hse_bit_index,
@@ -119,10 +131,20 @@ pub unsafe extern "C" fn rs_push_literal_byte(
     out_buff: *mut u8,
     out_size: &mut usize,
 ) {
-    let processed_offset = *hse_match_scan_index - 1;
+    let processed_offset = (*hse_match_scan_index).wrapping_sub(1);
     let buffer_offset = input_offset + processed_offset;
 
     let c = unsafe { *hse_buff.add(buffer_offset as usize) };
 
-    rs_push_bits(8, c, hse_bit_index, hse_curr_byte, out_buff, out_size);
+    push_bits(8, c, hse_bit_index, hse_curr_byte, out_buff, out_size);
+}
+
+#[no_mangle]
+pub extern "C" fn rs_get_input_buffer_size(window_bits: u8) -> u16 {
+    1u16 << window_bits
+}
+
+#[no_mangle]
+pub extern "C" fn rs_get_lookahead_size(lookahead_bits: u8) -> u16 {
+    1u16 << lookahead_bits
 }

@@ -47,19 +47,23 @@ typedef struct {
 
 #define MATCH_NOT_FOUND ((uint16_t)-1)
 
-static uint16_t get_input_offset(heatshrink_encoder *hse);
-static uint16_t get_input_buffer_size(heatshrink_encoder *hse);
-static uint16_t get_lookahead_size(heatshrink_encoder *hse);
-static void add_tag_bit(heatshrink_encoder *hse, output_info *oi, uint8_t tag);
 static int can_take_byte(output_info *oi);
 static int is_finishing(heatshrink_encoder *hse);
 static void save_backlog(heatshrink_encoder *hse);
 
-/* Push COUNT (max 8) bits to the output buffer, which has room. */
-static void push_bits(heatshrink_encoder *hse, uint8_t count, uint8_t bits,
-                      output_info *oi);
-static uint8_t push_outgoing_bits(heatshrink_encoder *hse, output_info *oi);
-static void push_literal_byte(heatshrink_encoder *hse, output_info *oi);
+extern uint16_t rs_get_input_buffer_size(uint8_t window_bits);
+extern uint16_t rs_get_lookahead_size(uint8_t lookahead_bits);
+extern void rs_add_tag_bit(uint8_t tag, uint8_t *hse_bit_index,
+                           uint8_t *hse_curr_byte, uint8_t *out_buff,
+                           size_t *out_size);
+extern uint8_t rs_push_outgoing_bits(uint16_t outgoing_bits,
+                                     uint8_t *outgoing_bits_count,
+                                     uint8_t *bit_index, uint8_t *current_byte,
+                                     uint8_t *out_buff, size_t *out_size);
+extern void rs_push_literal_byte(uint16_t input_offset,
+                                 uint16_t *match_scan_index, uint8_t *buffer,
+                                 uint8_t *bit_index, uint8_t *current_byte,
+                                 uint8_t *out_buff, size_t *out_size);
 
 #if HEATSHRINK_DYNAMIC_ALLOC
 heatshrink_encoder *heatshrink_encoder_alloc(uint8_t window_sz2,
@@ -147,8 +151,10 @@ HSE_sink_res heatshrink_encoder_sink(heatshrink_encoder *hse, uint8_t *in_buf,
     return HSER_SINK_ERROR_MISUSE;
   }
 
-  uint16_t write_offset = get_input_offset(hse) + hse->input_size;
-  uint16_t ibs = get_input_buffer_size(hse);
+  uint16_t write_offset =
+      rs_get_input_buffer_size(HEATSHRINK_ENCODER_WINDOW_BITS(hse)) +
+      hse->input_size;
+  uint16_t ibs = rs_get_input_buffer_size(HEATSHRINK_ENCODER_WINDOW_BITS(hse));
   uint16_t rem = ibs - hse->input_size;
   uint16_t cp_sz = rem < size ? rem : size;
 
@@ -257,8 +263,10 @@ HSE_finish_res heatshrink_encoder_finish(heatshrink_encoder *hse) {
 }
 
 static HSE_state st_step_search(heatshrink_encoder *hse) {
-  uint16_t window_length = get_input_buffer_size(hse);
-  uint16_t lookahead_sz = get_lookahead_size(hse);
+  uint16_t window_length =
+      rs_get_input_buffer_size(HEATSHRINK_ENCODER_WINDOW_BITS(hse));
+  uint16_t lookahead_sz =
+      rs_get_lookahead_size(HEATSHRINK_ENCODER_LOOKAHEAD_BITS(hse));
   uint16_t msi = hse->match_scan_index;
   LOG("## step_search, scan @ +%d (%d/%d), input size %d\n", msi,
       hse->input_size + msi, 2 * window_length, hse->input_size);
@@ -271,7 +279,8 @@ static HSE_state st_step_search(heatshrink_encoder *hse) {
     return fin ? HSES_FLUSH_BITS : HSES_SAVE_BACKLOG;
   }
 
-  uint16_t input_offset = get_input_offset(hse);
+  uint16_t input_offset =
+      rs_get_input_buffer_size(HEATSHRINK_ENCODER_WINDOW_BITS(hse));
   uint16_t end = input_offset + msi;
   uint16_t start = end - window_length;
 
@@ -303,10 +312,12 @@ static HSE_state st_step_search(heatshrink_encoder *hse) {
 static HSE_state st_yield_tag_bit(heatshrink_encoder *hse, output_info *oi) {
   if (can_take_byte(oi)) {
     if (hse->match_length == 0) {
-      add_tag_bit(hse, oi, HEATSHRINK_LITERAL_MARKER);
+      rs_add_tag_bit(HEATSHRINK_LITERAL_MARKER, &hse->bit_index,
+                     &hse->current_byte, oi->buf, oi->output_size);
       return HSES_YIELD_LITERAL;
     } else {
-      add_tag_bit(hse, oi, HEATSHRINK_BACKREF_MARKER);
+      rs_add_tag_bit(HEATSHRINK_BACKREF_MARKER, &hse->bit_index,
+                     &hse->current_byte, oi->buf, oi->output_size);
       hse->outgoing_bits = hse->match_pos - 1;
       hse->outgoing_bits_count = HEATSHRINK_ENCODER_WINDOW_BITS(hse);
       return HSES_YIELD_BR_INDEX;
@@ -318,7 +329,10 @@ static HSE_state st_yield_tag_bit(heatshrink_encoder *hse, output_info *oi) {
 
 static HSE_state st_yield_literal(heatshrink_encoder *hse, output_info *oi) {
   if (can_take_byte(oi)) {
-    push_literal_byte(hse, oi);
+    rs_push_literal_byte(
+        rs_get_input_buffer_size(HEATSHRINK_ENCODER_WINDOW_BITS(hse)),
+        &hse->match_scan_index, hse->buffer, &hse->bit_index,
+        &hse->current_byte, oi->buf, oi->output_size);
     return HSES_SEARCH;
   } else {
     return HSES_YIELD_LITERAL;
@@ -328,22 +342,28 @@ static HSE_state st_yield_literal(heatshrink_encoder *hse, output_info *oi) {
 static HSE_state st_yield_br_index(heatshrink_encoder *hse, output_info *oi) {
   if (can_take_byte(oi)) {
     LOG("-- yielding backref index %u\n", hse->match_pos);
-    if (push_outgoing_bits(hse, oi) > 0) {
-      return HSES_YIELD_BR_INDEX; /* continue */
+
+    if (rs_push_outgoing_bits(hse->outgoing_bits, &hse->outgoing_bits_count,
+                              &hse->bit_index, &hse->current_byte, oi->buf,
+                              oi->output_size) > 0) {
+      return HSES_YIELD_BR_INDEX;
     } else {
       hse->outgoing_bits = hse->match_length - 1;
       hse->outgoing_bits_count = HEATSHRINK_ENCODER_LOOKAHEAD_BITS(hse);
-      return HSES_YIELD_BR_LENGTH; /* done */
+      return HSES_YIELD_BR_LENGTH;
     }
   } else {
-    return HSES_YIELD_BR_INDEX; /* continue */
+    return HSES_YIELD_BR_INDEX;
   }
 }
 
 static HSE_state st_yield_br_length(heatshrink_encoder *hse, output_info *oi) {
   if (can_take_byte(oi)) {
     LOG("-- yielding backref length %u\n", hse->match_length);
-    if (push_outgoing_bits(hse, oi) > 0) {
+
+    if (rs_push_outgoing_bits(hse->outgoing_bits, &hse->outgoing_bits_count,
+                              &hse->bit_index, &hse->current_byte, oi->buf,
+                              oi->output_size) > 0) {
       return HSES_YIELD_BR_LENGTH;
     } else {
       hse->match_scan_index += hse->match_length;
@@ -375,25 +395,6 @@ static HSE_state st_flush_bit_buffer(heatshrink_encoder *hse, output_info *oi) {
   }
 }
 
-static void add_tag_bit(heatshrink_encoder *hse, output_info *oi, uint8_t tag) {
-  LOG("-- adding tag bit: %d\n", tag);
-  push_bits(hse, 1, tag, oi);
-}
-
-static uint16_t get_input_offset(heatshrink_encoder *hse) {
-  return get_input_buffer_size(hse);
-}
-
-static uint16_t get_input_buffer_size(heatshrink_encoder *hse) {
-  return (1 << HEATSHRINK_ENCODER_WINDOW_BITS(hse));
-  (void)hse;
-}
-
-static uint16_t get_lookahead_size(heatshrink_encoder *hse) {
-  return (1 << HEATSHRINK_ENCODER_LOOKAHEAD_BITS(hse));
-  (void)hse;
-}
-
 static void do_indexing(heatshrink_encoder *hse) {
 #if HEATSHRINK_USE_INDEX
   /* Build an index array I that contains flattened linked lists
@@ -419,7 +420,8 @@ static void do_indexing(heatshrink_encoder *hse) {
   uint8_t *const data = hse->buffer;
   int16_t *const index = hsi->index;
 
-  const uint16_t input_offset = get_input_offset(hse);
+  const uint16_t input_offset =
+      rs_get_input_buffer_size(HEATSHRINK_ENCODER_WINDOW_BITS(hse));
   const uint16_t end = input_offset + hse->input_size;
 
   for (uint16_t i = 0; i < end; i++) {
@@ -530,38 +532,9 @@ static uint16_t find_longest_match(heatshrink_encoder *hse, uint16_t start,
   return MATCH_NOT_FOUND;
 }
 
-extern void rs_push_bits(uint8_t, uint8_t, uint8_t *, uint8_t *, uint8_t *,
-                         size_t *);
-
-/* Push COUNT (max 8) bits to the output buffer, which has room.
- * Bytes are set from the lowest bits, up. */
-static void push_bits(heatshrink_encoder *hse, uint8_t count, uint8_t bits,
-                      output_info *oi) {
-  ASSERT(count <= 8);
-  rs_push_bits(count, bits, &hse->bit_index, &hse->current_byte, oi->buf,
-               oi->output_size);
-}
-
-extern uint8_t rs_push_outgoing_bits(uint16_t, uint8_t *, uint8_t *, uint8_t *,
-                                     uint8_t *, size_t *);
-
-static uint8_t push_outgoing_bits(heatshrink_encoder *hse, output_info *oi) {
-  return rs_push_outgoing_bits(hse->outgoing_bits, &hse->outgoing_bits_count,
-                               &hse->bit_index, &hse->current_byte, oi->buf,
-                               oi->output_size);
-}
-
-extern void rs_push_literal_byte(uint16_t, uint16_t *, uint8_t *, uint8_t *,
-                                 uint8_t *, uint8_t *, size_t *);
-
-static void push_literal_byte(heatshrink_encoder *hse, output_info *oi) {
-  rs_push_literal_byte(get_input_offset(hse), &hse->match_scan_index,
-                       hse->buffer, &hse->bit_index, &hse->current_byte,
-                       oi->buf, oi->output_size);
-}
-
 static void save_backlog(heatshrink_encoder *hse) {
-  size_t input_buf_sz = get_input_buffer_size(hse);
+  size_t input_buf_sz =
+      rs_get_input_buffer_size(HEATSHRINK_ENCODER_WINDOW_BITS(hse));
 
   uint16_t msi = hse->match_scan_index;
 
