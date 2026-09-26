@@ -108,3 +108,21 @@ pub unsafe extern "C" fn rs_push_outgoing_bits(
 
     count
 }
+
+#[no_mangle]
+pub unsafe extern "C" fn rs_push_literal_byte(
+    input_offset: u16,
+    hse_match_scan_index: &mut u16,
+    hse_buff: *mut u8,
+    hse_bit_index: &mut u8,
+    hse_curr_byte: &mut u8,
+    out_buff: *mut u8,
+    out_size: &mut usize,
+) {
+    let processed_offset = *hse_match_scan_index - 1;
+    let buffer_offset = input_offset + processed_offset;
+
+    let c = unsafe { *hse_buff.add(buffer_offset as usize) };
+
+    rs_push_bits(8, c, hse_bit_index, hse_curr_byte, out_buff, out_size);
+}

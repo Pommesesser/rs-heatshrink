@@ -551,13 +551,13 @@ static uint8_t push_outgoing_bits(heatshrink_encoder *hse, output_info *oi) {
                                oi->output_size);
 }
 
+extern void rs_push_literal_byte(uint16_t, uint16_t *, uint8_t *, uint8_t *,
+                                 uint8_t *, uint8_t *, size_t *);
+
 static void push_literal_byte(heatshrink_encoder *hse, output_info *oi) {
-  uint16_t processed_offset = hse->match_scan_index - 1;
-  uint16_t input_offset = get_input_offset(hse) + processed_offset;
-  uint8_t c = hse->buffer[input_offset];
-  LOG("-- yielded literal byte 0x%02x ('%c') from +%d\n", c,
-      isprint(c) ? c : '.', input_offset);
-  push_bits(hse, 8, c, oi);
+  rs_push_literal_byte(get_input_offset(hse), &hse->match_scan_index,
+                       hse->buffer, &hse->bit_index, &hse->current_byte,
+                       oi->buf, oi->output_size);
 }
 
 static void save_backlog(heatshrink_encoder *hse) {
