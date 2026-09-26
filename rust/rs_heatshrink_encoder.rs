@@ -148,3 +148,26 @@ pub extern "C" fn rs_get_input_buffer_size(window_bits: u8) -> u16 {
 pub extern "C" fn rs_get_lookahead_size(lookahead_bits: u8) -> u16 {
     1u16 << lookahead_bits
 }
+
+#[no_mangle]
+pub unsafe extern "C" fn rs_save_backlog(
+    input_buff_size: u16,
+    hse_input_size: &mut u16,
+    hse_match_scan_index: &mut u16,
+    hse_buff: *mut u8,
+) {
+    let remaining = input_buff_size - *hse_match_scan_index;
+    let shift_size = input_buff_size + remaining;
+    let source_offset = input_buff_size - remaining;
+
+    unsafe {
+        std::ptr::copy(
+            hse_buff.add(source_offset as usize),
+            hse_buff,
+            shift_size as usize,
+        );
+    }
+
+    *hse_match_scan_index = 0;
+    *hse_input_size -= input_buff_size - remaining;
+}

@@ -47,10 +47,8 @@ typedef struct {
 
 #define MATCH_NOT_FOUND ((uint16_t)-1)
 
-static int can_take_byte(output_info *oi);
-static int is_finishing(heatshrink_encoder *hse);
-static void save_backlog(heatshrink_encoder *hse);
-
+extern int rs_is_finishing(uint8_t flags);
+extern int rs_can_take_byte(size_t output_size, size_t buff_size);
 extern uint16_t rs_get_input_buffer_size(uint8_t window_bits);
 extern uint16_t rs_get_lookahead_size(uint8_t lookahead_bits);
 extern void rs_add_tag_bit(uint8_t tag, uint8_t *hse_bit_index,
@@ -64,6 +62,8 @@ extern void rs_push_literal_byte(uint16_t input_offset,
                                  uint16_t *match_scan_index, uint8_t *buffer,
                                  uint8_t *bit_index, uint8_t *current_byte,
                                  uint8_t *out_buff, size_t *out_size);
+extern void rs_save_backlog(uint16_t input_buff_size, uint16_t *hse_input_size,
+                            uint16_t *hse_match_scan_index, uint8_t *hse_buff);
 
 #if HEATSHRINK_DYNAMIC_ALLOC
 heatshrink_encoder *heatshrink_encoder_alloc(uint8_t window_sz2,
@@ -142,7 +142,7 @@ HSE_sink_res heatshrink_encoder_sink(heatshrink_encoder *hse, uint8_t *in_buf,
   }
 
   /* Sinking more content after saying the content is done, tsk tsk */
-  if (is_finishing(hse)) {
+  if (rs_is_finishing(hse->flags)) {
     return HSER_SINK_ERROR_MISUSE;
   }
 
@@ -271,7 +271,7 @@ static HSE_state st_step_search(heatshrink_encoder *hse) {
   LOG("## step_search, scan @ +%d (%d/%d), input size %d\n", msi,
       hse->input_size + msi, 2 * window_length, hse->input_size);
 
-  bool fin = is_finishing(hse);
+  bool fin = rs_is_finishing(hse->flags);
   if (msi > hse->input_size - (fin ? 1 : lookahead_sz)) {
     /* Current search buffer is exhausted, copy it into the
      * backlog and await more input. */
@@ -310,7 +310,7 @@ static HSE_state st_step_search(heatshrink_encoder *hse) {
 }
 
 static HSE_state st_yield_tag_bit(heatshrink_encoder *hse, output_info *oi) {
-  if (can_take_byte(oi)) {
+  if (rs_can_take_byte(*oi->output_size, oi->buf_size)) {
     if (hse->match_length == 0) {
       rs_add_tag_bit(HEATSHRINK_LITERAL_MARKER, &hse->bit_index,
                      &hse->current_byte, oi->buf, oi->output_size);
@@ -328,7 +328,7 @@ static HSE_state st_yield_tag_bit(heatshrink_encoder *hse, output_info *oi) {
 }
 
 static HSE_state st_yield_literal(heatshrink_encoder *hse, output_info *oi) {
-  if (can_take_byte(oi)) {
+  if (rs_can_take_byte(*oi->output_size, oi->buf_size)) {
     rs_push_literal_byte(
         rs_get_input_buffer_size(HEATSHRINK_ENCODER_WINDOW_BITS(hse)),
         &hse->match_scan_index, hse->buffer, &hse->bit_index,
@@ -340,7 +340,7 @@ static HSE_state st_yield_literal(heatshrink_encoder *hse, output_info *oi) {
 }
 
 static HSE_state st_yield_br_index(heatshrink_encoder *hse, output_info *oi) {
-  if (can_take_byte(oi)) {
+  if (rs_can_take_byte(*oi->output_size, oi->buf_size)) {
     LOG("-- yielding backref index %u\n", hse->match_pos);
 
     if (rs_push_outgoing_bits(hse->outgoing_bits, &hse->outgoing_bits_count,
@@ -358,7 +358,7 @@ static HSE_state st_yield_br_index(heatshrink_encoder *hse, output_info *oi) {
 }
 
 static HSE_state st_yield_br_length(heatshrink_encoder *hse, output_info *oi) {
-  if (can_take_byte(oi)) {
+  if (rs_can_take_byte(*oi->output_size, oi->buf_size)) {
     LOG("-- yielding backref length %u\n", hse->match_length);
 
     if (rs_push_outgoing_bits(hse->outgoing_bits, &hse->outgoing_bits_count,
@@ -377,7 +377,8 @@ static HSE_state st_yield_br_length(heatshrink_encoder *hse, output_info *oi) {
 
 static HSE_state st_save_backlog(heatshrink_encoder *hse) {
   LOG("-- saving backlog\n");
-  save_backlog(hse);
+  rs_save_backlog(rs_get_input_buffer_size(HEATSHRINK_ENCODER_WINDOW_BITS(hse)),
+                  &hse->input_size, &hse->match_scan_index, hse->buffer);
   return HSES_NOT_FULL;
 }
 
@@ -385,7 +386,7 @@ static HSE_state st_flush_bit_buffer(heatshrink_encoder *hse, output_info *oi) {
   if (hse->bit_index == 0x80) {
     LOG("-- done!\n");
     return HSES_DONE;
-  } else if (can_take_byte(oi)) {
+  } else if (rs_can_take_byte(*oi->output_size, oi->buf_size)) {
     LOG("-- flushing remaining byte (bit_index == 0x%02x)\n", hse->bit_index);
     oi->buf[(*oi->output_size)++] = hse->current_byte;
     LOG("-- done!\n");
@@ -433,18 +434,6 @@ static void do_indexing(heatshrink_encoder *hse) {
 #else
   (void)hse;
 #endif
-}
-
-extern int rs_is_finishing(uint8_t);
-
-static int is_finishing(heatshrink_encoder *hse) {
-  return rs_is_finishing(hse->flags);
-}
-
-extern int rs_can_take_byte(size_t, size_t);
-
-static int can_take_byte(output_info *oi) {
-  return rs_can_take_byte(*oi->output_size, oi->buf_size);
 }
 
 /* Return the longest match for the bytes at buf[end:end+maxlen] between
@@ -530,23 +519,4 @@ static uint16_t find_longest_match(heatshrink_encoder *hse, uint16_t start,
   }
   LOG("-- none found\n");
   return MATCH_NOT_FOUND;
-}
-
-static void save_backlog(heatshrink_encoder *hse) {
-  size_t input_buf_sz =
-      rs_get_input_buffer_size(HEATSHRINK_ENCODER_WINDOW_BITS(hse));
-
-  uint16_t msi = hse->match_scan_index;
-
-  /* Copy processed data to beginning of buffer, so it can be
-   * used for future matches. Don't bother checking whether the
-   * input is less than the maximum size, because if it isn't,
-   * we're done anyway. */
-  uint16_t rem = input_buf_sz - msi; // unprocessed bytes
-  uint16_t shift_sz = input_buf_sz + rem;
-
-  memmove(&hse->buffer[0], &hse->buffer[input_buf_sz - rem], shift_sz);
-
-  hse->match_scan_index = 0;
-  hse->input_size -= input_buf_sz - rem;
 }
